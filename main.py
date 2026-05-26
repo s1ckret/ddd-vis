@@ -1,391 +1,262 @@
 import sys
+import numpy as np
+import sounddevice as sd
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QComboBox, QTextEdit,
-    QScrollArea, QFrame, QGraphicsDropShadowEffect
+    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
+    QLabel, QComboBox, QPushButton, QProgressBar, QGroupBox, QGridLayout
 )
-from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QFont, QColor, QIcon
+from PyQt6.QtCore import Qt, QTimer
 
-class ModernCard(QFrame):
-    """A beautifully styled card to display domain components."""
-    def __init__(self, name, comp_type, desc, parent=None):
-        super().__init__(parent)
-        self.setObjectName("ModernCard")
-        
-        # Design layout
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(8)
-        
-        # Header layout (Name + Type Badge)
-        header_layout = QHBoxLayout()
-        
-        name_label = QLabel(name)
-        name_label.setObjectName("CardName")
-        name_label.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        
-        badge_label = QLabel(comp_type.upper())
-        badge_label.setObjectName("CardBadge")
-        badge_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        badge_font = QFont("Segoe UI", 8, QFont.Weight.Bold)
-        badge_label.setFont(badge_font)
-        
-        # Color badge depending on the DDD stereotype
-        if comp_type.lower() == "aggregate":
-            badge_label.setStyleSheet("background-color: rgba(147, 51, 234, 0.25); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.4);")
-        elif comp_type.lower() == "entity":
-            badge_label.setStyleSheet("background-color: rgba(59, 130, 246, 0.25); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4);")
-        elif comp_type.lower() == "value object":
-            badge_label.setStyleSheet("background-color: rgba(16, 185, 129, 0.25); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4);")
-        else: # Event / Command
-            badge_label.setStyleSheet("background-color: rgba(245, 158, 11, 0.25); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4);")
-            
-        header_layout.addWidget(name_label)
-        header_layout.addStretch()
-        header_layout.addWidget(badge_label)
-        
-        layout.addLayout(header_layout)
-        
-        # Description
-        desc_label = QLabel(desc if desc else "No description provided.")
-        desc_label.setObjectName("CardDescription")
-        desc_label.setWordWrap(True)
-        desc_label.setFont(QFont("Segoe UI", 10))
-        layout.addWidget(desc_label)
-        
-        # Styling sheet for the card
-        self.setStyleSheet("""
-            #ModernCard {
-                background-color: #1e1e24;
-                border: 1px solid #2e2e38;
-                border-radius: 12px;
-            }
-            #ModernCard:hover {
-                border: 1px solid #7c3aed;
-                background-color: #23232a;
-            }
-            #CardName {
-                color: #f3f4f6;
-            }
-            #CardDescription {
-                color: #9ca3af;
-            }
-            #CardBadge {
-                padding: 4px 10px;
-                border-radius: 6px;
-                min-width: 80px;
-            }
-        """)
-        
-        # Subtle shadow effect
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(15)
-        shadow.setXOffset(0)
-        shadow.setYOffset(4)
-        shadow.setColor(QColor(0, 0, 0, 60))
-        self.setGraphicsEffect(shadow)
-
-class DDDVisualizerApp(QMainWindow):
+class AudioPortSelectorApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DDD Visualizer Studio")
-        self.setMinimumSize(QSize(960, 640))
+        self.setWindowTitle("8-Channel Microphone Reader")
+        self.setMinimumSize(550, 420)
         
-        # Set central widget and layout
+        # Audio stream and state variables
+        self.stream = None
+        self.selected_device_id = None
+        self.num_channels = 8
+        self.current_peaks = [0.0] * 8
+        
+        # Central widget and layout
         self.central_widget = QWidget()
-        self.central_widget.setObjectName("CentralWidget")
         self.setCentralWidget(self.central_widget)
         
-        main_layout = QHBoxLayout(self.central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout = QVBoxLayout(self.central_widget)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(15)
         
-        # Sidebar / Control Panel
-        sidebar = QWidget()
-        sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(340)
+        # --- Selector Control Bar ---
+        selector_layout = QHBoxLayout()
+        selector_layout.setSpacing(10)
         
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(24, 28, 24, 28)
-        sidebar_layout.setSpacing(20)
+        self.input_label = QLabel("Select microphone:")
+        self.device_dropdown = QComboBox()
+        self.device_dropdown.setMinimumWidth(250)
         
-        # Header / Title
-        title_label = QLabel("DDD Visualizer")
-        title_label.setObjectName("SidebarTitle")
-        title_label.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(self.populate_devices)
         
-        subtitle_label = QLabel("Modeling Ubiquitous Language")
-        subtitle_label.setObjectName("SidebarSubtitle")
-        subtitle_label.setFont(QFont("Segoe UI", 9))
+        selector_layout.addWidget(self.input_label)
+        selector_layout.addWidget(self.device_dropdown, 1)
+        selector_layout.addWidget(self.refresh_btn)
+        main_layout.addLayout(selector_layout)
         
-        title_container = QVBoxLayout()
-        title_container.addWidget(title_label)
-        title_container.addWidget(subtitle_label)
-        title_container.setSpacing(4)
-        sidebar_layout.addLayout(title_container)
+        # --- Action Buttons ---
+        actions_layout = QHBoxLayout()
+        actions_layout.setSpacing(15)
         
-        # Divider Line
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setObjectName("DividerLine")
-        sidebar_layout.addWidget(divider)
+        self.start_btn = QPushButton("Start Reading")
+        self.start_btn.clicked.connect(self.start_audio)
         
-        # Input Form
-        form_layout = QVBoxLayout()
-        form_layout.setSpacing(14)
+        self.stop_btn = QPushButton("Stop Reading")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self.stop_audio)
         
-        # Component Name Input
-        name_container = QVBoxLayout()
-        name_container.setSpacing(6)
-        name_title = QLabel("Component Name")
-        name_title.setObjectName("InputLabel")
-        name_title.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("e.g. OrderAggregate, PaymentProcessed")
-        self.name_input.setObjectName("ModernInput")
-        name_container.addWidget(name_title)
-        name_container.addWidget(self.name_input)
-        form_layout.addLayout(name_container)
+        actions_layout.addWidget(self.start_btn)
+        actions_layout.addWidget(self.stop_btn)
+        main_layout.addLayout(actions_layout)
         
-        # Stereotype Dropdown
-        type_container = QVBoxLayout()
-        type_container.setSpacing(6)
-        type_title = QLabel("DDD Stereotype")
-        type_title.setObjectName("InputLabel")
-        type_title.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        self.type_dropdown = QComboBox()
-        self.type_dropdown.setObjectName("ModernCombo")
-        self.type_dropdown.addItems(["Aggregate", "Entity", "Value Object", "Domain Event"])
-        type_container.addWidget(type_title)
-        type_container.addWidget(self.type_dropdown)
-        form_layout.addLayout(type_container)
+        # --- Real-Time Level Meters ---
+        self.levels_group = QGroupBox("8-Channel Level Indicators")
+        levels_layout = QGridLayout(self.levels_group)
+        levels_layout.setContentsMargins(15, 15, 15, 15)
+        levels_layout.setSpacing(10)
         
-        # Description Input
-        desc_container = QVBoxLayout()
-        desc_container.setSpacing(6)
-        desc_title = QLabel("Description")
-        desc_title.setObjectName("InputLabel")
-        desc_title.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        self.desc_input = QTextEdit()
-        self.desc_input.setPlaceholderText("Describe the ubiquitous language definition, attributes, or business rules...")
-        self.desc_input.setObjectName("ModernTextEdit")
-        desc_container.addWidget(desc_title)
-        desc_container.addWidget(self.desc_input)
-        form_layout.addLayout(desc_container)
+        self.progress_bars = []
+        self.channel_labels = []
         
-        sidebar_layout.addLayout(form_layout)
+        for i in range(8):
+            label = QLabel(f"Channel {i+1}:")
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setValue(0)
+            
+            # Grid layout: Row i, Column 0: Label, Column 1: Progress Bar
+            levels_layout.addWidget(label, i, 0)
+            levels_layout.addWidget(bar, i, 1)
+            
+            self.channel_labels.append(label)
+            self.progress_bars.append(bar)
+            
+        main_layout.addWidget(self.levels_group)
         
-        # Buttons
-        self.add_button = QPushButton("Create Component")
-        self.add_button.setObjectName("AddButton")
-        self.add_button.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        self.add_button.clicked.connect(self.add_component)
-        sidebar_layout.addWidget(self.add_button)
+        # --- Status Label ---
+        self.status_label = QLabel("Select an input device and click 'Start Reading'.")
+        self.status_label.setWordWrap(True)
+        main_layout.addWidget(self.status_label)
         
-        sidebar_layout.addStretch()
+        # --- Timer for UI updates ---
+        self.ui_timer = QTimer()
+        self.ui_timer.setInterval(30) # Poll every ~33ms (30 FPS)
+        self.ui_timer.timeout.connect(self.update_levels_ui)
         
-        # Footer Credits
-        footer_label = QLabel("Design: Antigravity Studio 2026")
-        footer_label.setObjectName("FooterLabel")
-        footer_label.setFont(QFont("Segoe UI", 8))
-        sidebar_layout.addWidget(footer_label)
+        # Listen for dropdown changes
+        self.device_dropdown.currentIndexChanged.connect(self.on_device_changed)
         
-        # Main Visual Area / Canvas
-        canvas = QWidget()
-        canvas.setObjectName("Canvas")
-        
-        canvas_layout = QVBoxLayout(canvas)
-        canvas_layout.setContentsMargins(32, 28, 32, 28)
-        canvas_layout.setSpacing(20)
-        
-        # Canvas Header
-        canvas_header = QHBoxLayout()
-        canvas_title = QLabel("Domain Model Architecture")
-        canvas_title.setObjectName("CanvasTitle")
-        canvas_title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
-        
-        self.stats_label = QLabel("0 elements")
-        self.stats_label.setObjectName("StatsLabel")
-        self.stats_label.setFont(QFont("Segoe UI", 10))
-        
-        canvas_header.addWidget(canvas_title)
-        canvas_header.addStretch()
-        canvas_header.addWidget(self.stats_label)
-        canvas_layout.addLayout(canvas_header)
-        
-        # Scroll Area for Model Cards
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setObjectName("ModernScroll")
-        
-        self.scroll_content = QWidget()
-        self.scroll_content.setObjectName("ScrollContent")
-        self.cards_layout = QVBoxLayout(self.scroll_content)
-        self.cards_layout.setContentsMargins(0, 0, 0, 0)
-        self.cards_layout.setSpacing(16)
-        self.cards_layout.addStretch() # Push everything up initially
-        
-        self.scroll_area.setWidget(self.scroll_content)
-        canvas_layout.addWidget(self.scroll_area)
-        
-        # Add side panel and canvas to the main window
-        main_layout.addWidget(sidebar)
-        main_layout.addWidget(canvas)
-        
-        # Global Stylesheet for Modern Dark UI
-        self.setStyleSheet("""
-            #CentralWidget {
-                background-color: #0b0f19;
-            }
-            #Sidebar {
-                background-color: #0f172a;
-                border-right: 1px solid #1e293b;
-            }
-            #Canvas {
-                background-color: #020617;
-            }
-            #SidebarTitle {
-                color: #f8fafc;
-            }
-            #SidebarSubtitle {
-                color: #94a3b8;
-            }
-            #DividerLine {
-                color: #1e293b;
-                background-color: #1e293b;
-                max-height: 1px;
-            }
-            #InputLabel {
-                color: #38bdf8;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }
-            #ModernInput {
-                background-color: #1e293b;
-                border: 1px solid #334155;
-                border-radius: 8px;
-                padding: 8px 12px;
-                color: #f8fafc;
-                selection-background-color: #7c3aed;
-            }
-            #ModernInput:focus {
-                border: 1px solid #7c3aed;
-                background-color: #0f172a;
-            }
-            #ModernCombo {
-                background-color: #1e293b;
-                border: 1px solid #334155;
-                border-radius: 8px;
-                padding: 8px 12px;
-                color: #f8fafc;
-            }
-            #ModernCombo:focus {
-                border: 1px solid #7c3aed;
-            }
-            #ModernCombo QAbstractItemView {
-                background-color: #0f172a;
-                color: #f8fafc;
-                border: 1px solid #1e293b;
-                selection-background-color: #7c3aed;
-            }
-            #ModernTextEdit {
-                background-color: #1e293b;
-                border: 1px solid #334155;
-                border-radius: 8px;
-                padding: 8px 12px;
-                color: #f8fafc;
-                min-height: 100px;
-            }
-            #ModernTextEdit:focus {
-                border: 1px solid #7c3aed;
-                background-color: #0f172a;
-            }
-            #AddButton {
-                background-color: #7c3aed;
-                color: #ffffff;
-                border: none;
-                border-radius: 8px;
-                padding: 12px;
-                margin-top: 10px;
-            }
-            #AddButton:hover {
-                background-color: #8b5cf6;
-            }
-            #AddButton:pressed {
-                background-color: #6d28d9;
-            }
-            #FooterLabel {
-                color: #475569;
-            }
-            #CanvasTitle {
-                color: #f8fafc;
-            }
-            #StatsLabel {
-                color: #10b981;
-                background-color: rgba(16, 185, 129, 0.1);
-                border: 1px solid rgba(16, 185, 129, 0.2);
-                border-radius: 20px;
-                padding: 4px 14px;
-            }
-            #ModernScroll {
-                border: none;
-                background-color: transparent;
-            }
-            #ScrollContent {
-                background-color: transparent;
-            }
-        """)
-        
-        # Track items count
-        self.items_count = 0
-        
-        # Populate with some beautiful pre-configured example data cards
-        self.add_initial_mock_data()
+        # Populate initially
+        self.populate_devices()
 
-    def add_initial_mock_data(self):
-        """Adds a couple of sample cards to showcase visual aesthetics immediately."""
-        self.add_item("OrderAggregate", "Aggregate", "Root element representing customers' purchasing lifecycle. Validates invariant constraints across line items.")
-        self.add_item("OrderPaidEvent", "Domain Event", "Emitted asynchronously when the payment gateway successfully processes the customer's invoice.")
-        self.add_item("Money", "Value Object", "Immutably models financial values, specifying an ISO currency and amount. Prevents invalid mixed-currency operations.")
-
-    def add_item(self, name, comp_type, desc):
-        """Creates a card widget and inserts it into the canvas listing."""
-        card = ModernCard(name, comp_type, desc)
+    def populate_devices(self):
+        """Query and load audio input devices."""
+        self.device_dropdown.clear()
         
-        # Insert card at the top, shifting the stretch down
-        self.cards_layout.insertWidget(self.items_count, card)
-        
-        self.items_count += 1
-        self.stats_label.setText(f"{self.items_count} elements")
-
-    def add_component(self):
-        """Action handler when user clicks Create Component."""
-        name = self.name_input.text().strip()
-        comp_type = self.type_dropdown.currentText()
-        desc = self.desc_input.toPlainText().strip()
-        
-        if not name:
-            # Simple soft validation feedback - reset focus highlight
-            self.name_input.setFocus()
-            self.name_input.setStyleSheet("border: 1px solid #ef4444; background-color: #1e293b; color: #f8fafc;")
+        try:
+            devices = sd.query_devices()
+        except Exception as e:
+            self.status_label.setText(f"Error querying audio devices: {e}")
             return
             
-        # Reset border styles on successful input
-        self.name_input.setStyleSheet("")
+        input_devices = []
+        for i, d in enumerate(devices):
+            if d['max_input_channels'] > 0:
+                input_devices.append((i, d))
+                
+        if not input_devices:
+            self.device_dropdown.addItem("No input devices detected")
+            self.device_dropdown.setEnabled(False)
+            self.start_btn.setEnabled(False)
+            self.status_label.setText("No microphone detected. Please plug in a microphone and refresh.")
+        else:
+            self.device_dropdown.setEnabled(True)
+            self.start_btn.setEnabled(True)
+            for idx, dev in input_devices:
+                name = dev['name']
+                chans = dev['max_input_channels']
+                display_text = f"{name} ({chans} input ch)"
+                self.device_dropdown.addItem(display_text, idx)
+                
+            self.status_label.setText("Input devices refreshed successfully.")
+
+    def on_device_changed(self, index):
+        """Fires when the user selects a different input device."""
+        if index < 0 or not self.device_dropdown.isEnabled():
+            self.selected_device_id = None
+            return
+        self.selected_device_id = self.device_dropdown.itemData(index)
+
+    def audio_callback(self, indata, frames, time, status):
+        """Sounddevice non-blocking audio stream callback."""
+        if status:
+            # We print PortAudio buffer status warnings if any (e.g. input overflow)
+            print(f"PortAudio status: {status}", flush=True)
+            
+        # indata has shape (frames, channels)
+        # Calculate peak amplitude (0.0 to 1.0) along the frames axis for each channel
+        peaks = np.max(np.abs(indata), axis=0)
         
-        self.add_item(name, comp_type, desc)
+        # Fill in active channels, zero out the rest
+        for ch in range(8):
+            if ch < len(peaks):
+                self.current_peaks[ch] = float(peaks[ch])
+            else:
+                self.current_peaks[ch] = 0.0
+
+    def start_audio(self):
+        """Initialize and start the 8-channel input stream."""
+        if self.selected_device_id is None:
+            self.status_label.setText("Please select a valid input device first.")
+            return
+            
+        # Close any existing stream first
+        if self.stream is not None:
+            self.stop_audio()
+            
+        try:
+            device_info = sd.query_devices(self.selected_device_id)
+            samplerate = int(device_info['default_samplerate'])
+            max_chans = int(device_info['max_input_channels'])
+        except Exception as e:
+            self.status_label.setText(f"Failed to query device details: {e}")
+            return
+
+        self.current_peaks = [0.0] * 8
+        self.status_label.setText("Starting audio stream...")
         
-        # Clear inputs
-        self.name_input.clear()
-        self.desc_input.clear()
-        self.name_input.setFocus()
+        # We try to open 8 channels. If the hardware supports fewer channels,
+        # we open as many channels as possible up to 8 and zero out the inactive meters.
+        target_chans = 8
+        opened_chans = target_chans
+        
+        try:
+            self.stream = sd.InputStream(
+                device=self.selected_device_id,
+                channels=target_chans,
+                samplerate=samplerate,
+                callback=self.audio_callback
+            )
+            self.stream.start()
+            self.status_label.setText(f"Reading 8 channels successfully at {samplerate}Hz.")
+        except Exception as e:
+            # Fallback block: try opening the maximum supported channels (capped at 8)
+            opened_chans = min(8, max_chans)
+            try:
+                self.stream = sd.InputStream(
+                    device=self.selected_device_id,
+                    channels=opened_chans,
+                    samplerate=samplerate,
+                    callback=self.audio_callback
+                )
+                self.stream.start()
+                self.status_label.setText(
+                    f"Warning: Hardware does not support 8 channels. "
+                    f"Opened with fallback: Reading {opened_chans} channel(s)."
+                )
+            except Exception as err:
+                self.status_label.setText(f"Failed to open audio: {err}")
+                self.stream = None
+                return
+
+        # Update button states and start UI timer
+        self.start_btn.setEnabled(False)
+        self.device_dropdown.setEnabled(False)
+        self.refresh_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.ui_timer.start()
+
+    def stop_audio(self):
+        """Stop and close the audio stream cleanly."""
+        self.ui_timer.stop()
+        
+        if self.stream is not None:
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception as e:
+                print(f"Error closing stream: {e}")
+            self.stream = None
+            
+        # Reset level indicators
+        self.current_peaks = [0.0] * 8
+        for bar in self.progress_bars:
+            bar.setValue(0)
+            
+        # Re-enable inputs
+        self.start_btn.setEnabled(True)
+        self.device_dropdown.setEnabled(True)
+        self.refresh_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.status_label.setText("Audio reading stopped.")
+
+    def update_levels_ui(self):
+        """Update progress bars in the main GUI thread from audio thread peak values."""
+        for ch in range(8):
+            # Scale absolute amplitude peak (0.0 to 1.0) to standard percentage (0 to 100)
+            val = int(self.current_peaks[ch] * 100)
+            # Clip between 0 and 100 just to be safe
+            val = max(0, min(100, val))
+            self.progress_bars[ch].setValue(val)
+
+    def closeEvent(self, event):
+        """Make sure to stop audio stream when closing the application."""
+        self.stop_audio()
+        super().closeEvent(event)
 
 def main():
     app = QApplication(sys.argv)
-    app.setStyle('Fusion') # Clean cross-platform baseline style
     
-    window = DDDVisualizerApp()
+    window = AudioPortSelectorApp()
     window.show()
     sys.exit(app.exec())
 
