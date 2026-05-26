@@ -1,8 +1,11 @@
+import logging
 import os
-import wavfile
+from scipy.io import wavfile
+import numpy as np
 
 from PyQt6.QtWidgets import QFileDialog, QHBoxLayout, QLineEdit, QPushButton, QWidget, QVBoxLayout, QLabel, QFrame
 from PyQt6.QtCore import Qt, pyqtSignal
+import pyqtgraph as pg # Import pyqtgraph
 
 class FileTab(QWidget):
     fileSelected = pyqtSignal(str)       # Emits selected WAV filepath
@@ -26,6 +29,12 @@ class FileTab(QWidget):
         file_layout.addWidget(self.btn_browse)
         layout.addWidget(self.file_container)
         
+        # Plotting Area
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setBackground('w')
+        self.plot_widget.showGrid(x=True, y=True)
+        layout.addWidget(self.plot_widget)
+        
         self.btn_browse.clicked.connect(self.on_browse_file)
     
     def on_browse_file(self):
@@ -38,20 +47,40 @@ class FileTab(QWidget):
         )
         if file_path:
             self.line_file.setText(file_path)
-            FileTab.load_wav(file_path)
-    
+            fs, data = FileTab.load_wav(file_path)
+            if data is not None:
+                self.plot_data(fs, data)
+                n_samples, n_channels = data.shape
+                duration = n_samples / fs
+
+                logging.info(
+                    f"Successfully loaded: {file_path} {fs} Hz Data shape: {data.shape} Duration: {duration:.2f} seconds"
+                )
+            
+            
+    def plot_data(self, fs, data):
+        self.plot_widget.clear()
+        
+        legend = self.plot_widget.addLegend()
+        
+        n_samples, n_channels = data.shape
+        time = np.arange(n_samples) / fs
+        colors = ['r', 'b', 'g', 'c', 'm', 'y']
+        
+        for i in range(n_channels):
+            color = colors[i % len(colors)]
+            # 2. Add the 'name' argument so the legend knows what to display
+            self.plot_widget.plot(
+                time, 
+                data[:, i], 
+                pen=pg.mkPen(color=color, width=1), 
+                name=f"Channel {i+1}"
+            )
+            
+    @staticmethod
     def load_wav(filename):
-        """
-        Loads a WAV file and prints metadata.
-        
-        Parameters:
-        filename (str): Path to the WAV file.
-        
-        Returns:
-        tuple: (sampling_rate, data_array)
-        """
         if not os.path.exists(filename):
-            print(f"Error: File '{filename}' not found.")
+            logging.error(f"Error: File '{filename}' not found.")
             return None, None
         
         fs, data = wavfile.read(filename)
@@ -59,14 +88,5 @@ class FileTab(QWidget):
         # data shape is typically (samples, channels)
         if len(data.shape) == 1:
             data = data.reshape(-1, 1)
-            
-        n_samples, n_channels = data.shape
-        duration = n_samples / fs
-        
-        print(f"Successfully loaded: {filename}")
-        print(f"  Sampling rate     : {fs} Hz")
-        print(f"  Data shape        : {data.shape}")
-        print(f"  Number of channels: {n_channels}")
-        print(f"  Duration          : {duration:.2f} seconds")
         
         return fs, data
