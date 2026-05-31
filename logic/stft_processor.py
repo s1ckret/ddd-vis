@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 class StftChunk:
     freqs: np.ndarray        # shape: (n_freqs,)                    — frequency bin centres in Hz
     times: np.ndarray        # shape: (n_frames,)                   — time offsets within this chunk in seconds
-    magnitudes: np.ndarray   # shape: (n_channels, n_freqs, n_frames) — magnitude spectrum
+    magnitudes: np.ndarray   # shape: (n_channels, n_freqs, n_frames) — complex STFT spectrum (use np.abs() for magnitude)
     sampling_rate: int
     timestamp: float         # inherited from AudioChunk
 
@@ -45,7 +45,7 @@ class StftProcessor:
                     nperseg=self.nperseg,
                     noverlap=self.noverlap,
                 )
-                per_channel.append((freqs, times, np.abs(Zxx)))
+                per_channel.append((freqs, times, Zxx))
 
             freqs = per_channel[0][0]
             times = per_channel[0][1]

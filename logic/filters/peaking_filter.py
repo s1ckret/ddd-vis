@@ -53,8 +53,9 @@ class PeakingFilter(AudioFilter):
             data = chunk.data.astype(np.float32)
 
             if self._zi is None:
-                zi_proto = sosfilt_zi(self._sos)                         # (1, 2)
-                self._zi = np.stack([zi_proto] * n_channels, axis=-1)   # (1, 2, channels)
+                # Scale zi by first sample to pre-charge the filter — eliminates startup transient
+                zi_proto = sosfilt_zi(self._sos)                                                    # (1, 2)
+                self._zi = np.stack([zi_proto * data[0, ch] for ch in range(n_channels)], axis=-1) # (1, 2, channels)
 
             filtered = np.empty_like(data)
             for ch in range(n_channels):

@@ -34,9 +34,9 @@ class HighPassFilter(AudioFilter):
             data = chunk.data.astype(np.float32)
 
             if self._zi is None:
-                # sosfilt_zi returns (n_sections, 2) — replicate for each channel
+                # Scale zi by first sample to pre-charge the filter — eliminates startup transient
                 zi_proto = sosfilt_zi(self._sos)              # (n_sections, 2)
-                self._zi = np.stack([zi_proto] * n_channels, axis=-1)  # (n_sections, 2, channels)
+                self._zi = np.stack([zi_proto * data[0, ch] for ch in range(n_channels)], axis=-1)
 
             filtered = np.empty_like(data)
             for ch in range(n_channels):

@@ -32,6 +32,12 @@ class DoaProcessor:
         Number of sound sources to locate.
     algorithm:
         One of 'NormMUSIC' (recommended) or 'MUSIC'.
+    freq_range:
+        ``[fmin_hz, fmax_hz]`` frequency band used for DOA estimation.
+        Choose a range below the spatial aliasing limit of the mic array.
+        For the outer ring (48 cm diagonal) that is ≤ 357 Hz; for the inner
+        ring (21 cm diagonal) with an HP filter applied it is [400, 808] Hz.
+        Default: ``[200, 4000]`` (pyroomacoustics default).
     """
 
     def __init__(
@@ -41,8 +47,11 @@ class DoaProcessor:
         nfft: int = 512,
         n_sources: int = 1,
         algorithm: str = "NormMUSIC",
+        freq_range: list[float] | None = None,
     ):
         self.n_sources = n_sources
+        # freq_range is passed to locate_sources; default matches pyroomacoustics default
+        self._freq_range = freq_range if freq_range is not None else [200.0, 4000.0]
 
         algo_cls = getattr(pra_doa, algorithm, None)
         if algo_cls is None:
@@ -58,7 +67,7 @@ class DoaProcessor:
     def process(self, chunks: Generator[StftChunk, None, None]) -> Generator[DoaChunk, None, None]:
         for chunk in chunks:
             try:
-                self._algo.locate_sources(chunk.magnitudes, num_src=self.n_sources)
+                self._algo.locate_sources(chunk.magnitudes, num_src=self.n_sources, freq_range=self._freq_range)
                 azimuth_rad = float(self._algo.azimuth_recon[0])
             except Exception as e:
                 log.warning("DOA estimation failed: %s", e)
