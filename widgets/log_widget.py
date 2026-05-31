@@ -1,19 +1,23 @@
 import logging
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel, QApplication
 from PyQt6.QtCore import QObject, pyqtSignal, Qt
 
 # 1. The custom handler that bridges logging and Qt
-class LogHandler(logging.Handler, QObject):
-    # Define a signal to send the log message to the UI thread
+class _LogEmitter(QObject):
     log_signal = pyqtSignal(str)
 
+class LogHandler(logging.Handler):
     def __init__(self):
         super().__init__()
-        QObject.__init__(self)
+        self.emitter = _LogEmitter()
+
+    @property
+    def log_signal(self):
+        return self.emitter.log_signal
 
     def emit(self, record):
         msg = self.format(record)
-        self.log_signal.emit(msg)
+        self.emitter.log_signal.emit(msg)
 
 # 2. The UI component
 class LogWidget(QWidget):
@@ -46,10 +50,19 @@ class LogWidget(QWidget):
         self.handler.log_signal.connect(self.update_log_ui)
         logging.getLogger().addHandler(self.handler)
         logging.getLogger().setLevel(logging.INFO)
+        QApplication.instance().aboutToQuit.connect(self._remove_handler)
 
     def update_log_ui(self, message):
         self.status_label.setText(message)
         self.text_area.append(message)
+
+    def _remove_handler(self):
+        logging.getLogger().removeHandler(self.handler)
+        self.handler.close()
+
+    def closeEvent(self, event):
+        self._remove_handler()
+        super().closeEvent(event)
 
     def toggle_logs(self):
         is_visible = self.text_area.isVisible()
