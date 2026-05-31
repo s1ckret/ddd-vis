@@ -1,0 +1,56 @@
+@startuml
+ scale 50 as 100 pixels
+ 
+ robust "Raw Audio" as audio
+ robust "AudioChunk" as ac
+ concise "STFT Windows (×31, 50% overlap)" as stft
+ concise "DOA Output" as doa
+ 
+ @0
+ audio is Streaming
+ ac is "Chunk 0\n[0 – 186ms]"
+ stft is "W0"
+ doa is " "
+ 
+ @6
+ stft is "W1"
+ 
+ @12
+ stft is "W2"
+ 
+ @18
+ stft is "···"
+ 
+ @180
+ stft is "W30"
+ 
+ @186
+ ac is "Chunk 1\n[186 – 372ms]"
+ stft is "W0"
+ doa is "DOA #0\n← from Chunk 0"
+ 
+ @192
+ stft is "W1"
+ doa is " "
+ 
+ @198
+ stft is "W2"
+ 
+ @204
+ stft is "···"
+ 
+ @366
+ stft is "W30"
+ 
+ @372
+ ac is "Chunk 2\n[372 – 557ms]"
+ stft is "W0"
+ doa is "DOA #1\n← from Chunk 1"
+ 
+ @378
+ doa is " "
+ 
+ @highlight 0 to 186 : Chunk 0 captured
+ @highlight 186 to 372 : Chunk 1 captured
+ 
+ @enduml
