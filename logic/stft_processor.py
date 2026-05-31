@@ -27,26 +27,19 @@ class StftProcessor:
         window: str = "hann",
     ):
         self.nperseg = nperseg
-        self.noverlap = noverlap if noverlap is not None else nperseg // 2
+        self.noverlap = noverlap
         self.window = window
-        self._carry: np.ndarray | None = None  # shape: (noverlap, channels)
 
     def process(self, chunks: Generator[AudioChunk, None, None]) -> Generator[StftChunk, None, None]:
         for chunk in chunks:
-            # Prepend carry-over from previous chunk to maintain cross-boundary overlap
-            if self._carry is not None:
-                data = np.concatenate([self._carry, chunk.data.astype(np.float32)], axis=0)
-            else:
-                data = chunk.data.astype(np.float32)
+            # data shape: (frames, channels)
+            n_channels = chunk.data.shape[1]
 
-            # Save last noverlap samples for next chunk
-            self._carry = data[-self.noverlap:]
-
-            n_channels = data.shape[1]
             per_channel: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
             for ch in range(n_channels):
+                signal = chunk.data[:, ch].astype(np.float32)
                 freqs, times, Zxx = stft(
-                    data[:, ch],
+                    signal,
                     fs=chunk.sampling_rate,
                     window=self.window,
                     nperseg=self.nperseg,
