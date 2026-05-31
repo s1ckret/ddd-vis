@@ -29,6 +29,16 @@ class WavLoader(Loader):
         if data.ndim == 1:
             data = data.reshape(-1, 1)
 
+        # Normalise to float32 [-1.0, 1.0] regardless of source bit depth
+        if data.dtype == np.int16:
+            data = data.astype(np.float32) / 32768.0
+        elif data.dtype == np.int32:
+            data = data.astype(np.float32) / 2147483648.0
+        elif data.dtype == np.uint8:
+            data = (data.astype(np.float32) - 128.0) / 128.0
+        elif data.dtype != np.float32:
+            data = data.astype(np.float32)
+
         log.info("Streaming '%s' (%d ch, %d Hz)", os.path.basename(self.file_path), data.shape[1], sampling_rate)
 
         for start in range(0, len(data), self.chunk_size):
