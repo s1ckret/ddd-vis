@@ -10,7 +10,7 @@ import pyqtgraph.opengl as gl
 
 from PyQt6.QtCore import QObject, QThread, QTimer
 from PyQt6.QtWidgets import (
-    QFileDialog, QGridLayout, QHBoxLayout, QLineEdit,
+    QApplication, QFileDialog, QGridLayout, QHBoxLayout, QLineEdit,
     QPushButton, QVBoxLayout, QWidget,
 )
 
@@ -83,6 +83,7 @@ class PipelineWorker(QObject):
         self.stft_q     = stft_q
         self.doa_q      = doa_q
         self._pause     = pause_event
+        self._stop      = threading.Event()
         self.running    = True
 
     def run(self):
@@ -110,13 +111,16 @@ class PipelineWorker(QObject):
             if not self.running:
                 break
             self.doa_q.put(doa_chunk)
-            self._pause.wait()           # blocks here when paused
-            time.sleep(chunk_duration)   # pace output to real-time audio speed
+            self._pause.wait()                      # blocks here when paused
+            self._stop.wait(timeout=chunk_duration) # interruptible real-time pace
+            if self._stop.is_set():
+                break
 
         log.info("PipelineWorker: finished streaming '%s'", self.file_path)
 
     def stop(self):
         self.running = False
+        self._stop.set()   # unblock interruptible sleep
         self._pause.set()  # unblock if currently paused
 
 
@@ -344,6 +348,8 @@ class FileTab(QWidget):
         self._poll_timer.timeout.connect(self._poll_queues)
         self._poll_timer.start()
 
+        QApplication.instance().aboutToQuit.connect(self._cleanup)
+
     # ── UI construction ────────────────────────────────────────────────────────
 
     def _build_ui(self):
@@ -471,7 +477,10 @@ class FileTab(QWidget):
 
     # ── Cleanup ────────────────────────────────────────────────────────────────
 
-    def closeEvent(self, event):
+    def _cleanup(self):
         self._poll_timer.stop()
         self._stop_worker()
+
+    def closeEvent(self, event):
+        self._cleanup()
         super().closeEvent(event)
