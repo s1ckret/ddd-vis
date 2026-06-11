@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 from logic.doa_processor import DoaProcessor
 from logic.filters import HighPassFilter
 from logic.loader import AudioChunk
+from logic.median_doa_processor import MedianDoaProcessor
 from logic.stft_processor import StftProcessor
 from logic.wav_loader import WavLoader
 
@@ -27,7 +28,7 @@ log = logging.getLogger(__name__)
 SAMPLE_RATE    = 44100
 CHUNK_SIZE     = 8192
 NPERSEG        = 512
-NOVERLAP       = 256
+NOVERLAP       = 448
 HP_CUTOFF_HZ   = 400
 INNER_IDX      = slice(4, 8)
 DOA_FREQ_RANGE = [400, 808]
@@ -106,6 +107,7 @@ class PipelineWorker(QObject):
         stft_stream     = spy(stft_stream, self.stft_q)
 
         doa_stream      = doa.process(stft_stream)
+        doa_stream      = MedianDoaProcessor(window=3).process(doa_stream)
 
         for doa_chunk in doa_stream:
             if not self.running:
