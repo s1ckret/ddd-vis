@@ -20,6 +20,24 @@ class StftChunk:
 
 
 class StftProcessor:
+    """Computes per-channel STFT with cross-chunk overlap continuity.
+
+    Parameters
+    ----------
+    nperseg:
+        FFT window length in samples. The chunk_size (in samples at this
+        processor's sample rate) must exceed nperseg. When upstream resampling
+        is applied, account for the rate change:
+        chunk_size_orig >= nperseg * (orig_rate / target_rate).
+        Example: nperseg=2048 at 8 kHz from a 44.1 kHz source requires
+        chunk_size >= 11290 at the source rate (use 32768 for headroom).
+    noverlap:
+        Number of samples overlapping between consecutive windows.
+        87.5% overlap = noverlap = nperseg - nperseg // 8.
+    window:
+        Window function name (e.g. 'hann').
+    """
+
     def __init__(
         self,
         nperseg: int = 512,
@@ -29,17 +47,29 @@ class StftProcessor:
         self.nperseg = nperseg
         self.noverlap = noverlap
         self.window = window
+        self._buffer: np.ndarray | None = None  # shape (noverlap, n_channels)
+
+    def reset(self) -> None:
+        """Clear the inter-chunk overlap buffer. Call when starting a new stream."""
+        self._buffer = None
 
     def process(self, chunks: Generator[AudioChunk, None, None]) -> Generator[StftChunk, None, None]:
         for chunk in chunks:
             # data shape: (frames, channels)
-            n_channels = chunk.data.shape[1]
+            data = chunk.data.astype(np.float32)
 
+            # Prepend buffered tail from previous chunk so overlap spans chunk boundaries
+            if self._buffer is not None and self.noverlap:
+                data = np.concatenate([self._buffer, data], axis=0)
+
+            if self.noverlap:
+                self._buffer = data[-self.noverlap:].copy()
+
+            n_channels = data.shape[1]
             per_channel: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
             for ch in range(n_channels):
-                signal = chunk.data[:, ch].astype(np.float32)
                 freqs, times, Zxx = stft(
-                    signal,
+                    data[:, ch],
                     fs=chunk.sampling_rate,
                     window=self.window,
                     nperseg=self.nperseg,

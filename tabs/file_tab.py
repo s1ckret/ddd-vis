@@ -15,9 +15,11 @@ from PyQt6.QtWidgets import (
 )
 
 from logic.doa_processor import DoaProcessor
-from logic.filters import HighPassFilter
+from logic.filters.bandpass_filter import BandpassFilter
+from logic.filters.dc_offset_filter import DcOffsetFilter
 from logic.loader import AudioChunk
 from logic.median_doa_processor import MedianDoaProcessor
+from logic.resample_processor import ResampleProcessor
 from logic.stft_processor import StftProcessor
 from logic.wav_loader import WavLoader
 
@@ -25,13 +27,18 @@ log = logging.getLogger(__name__)
 
 # ── Pipeline config ────────────────────────────────────────────────────────────
 
-SAMPLE_RATE    = 44100
-CHUNK_SIZE     = 8192
-NPERSEG        = 512
-NOVERLAP       = 448
-HP_CUTOFF_HZ   = 400
+SAMPLE_RATE    = 44100   # source WAV sample rate
+TARGET_RATE    = 8000    # processing rate (Nyquist = 4 kHz covers full drone band)
+# chunk_size must satisfy: CHUNK_SIZE >= NPERSEG * (SAMPLE_RATE / TARGET_RATE) ≈ 11290
+CHUNK_SIZE     = 32768
+NPERSEG        = 2048    # Δf = TARGET_RATE / NPERSEG ≈ 3.9 Hz — resolves drone motor tracks
+NOVERLAP       = 1792    # 87.5% overlap → hop = 256 samples ≈ 31 STFT frames/sec
+BP_LOW_HZ      = 80      # kills wind rumble below drone fundamental (~83 Hz)
+BP_HIGH_HZ     = 1200    # kills clutter above 2nd harmonic
 INNER_IDX      = slice(4, 8)
-DOA_FREQ_RANGE = [400, 808]
+DOA_FREQ_RANGE = [400, 808]   # inner ring spatial aliasing limit (21 cm diagonal)
+SPEC_FREQ_MIN  = 100.0
+SPEC_FREQ_MAX  = 1000.0
 
 L_INNER = np.array([
     [-0.075,  0.075, -0.075,  0.075],
@@ -39,7 +46,7 @@ L_INNER = np.array([
     [ 0.000,  0.000,  0.000,  0.000],
 ])
 
-WAVEFORM_BUFFER_SIZE = SAMPLE_RATE * 2  # 2 seconds of samples
+WAVEFORM_SECONDS     = 2                # seconds of audio kept in waveform buffer
 SPEC_MAX_COLS        = 200              # scrolling spectrogram width in STFT frames
 AZIMUTH_HISTORY      = 20              # dots kept on sphere
 SPHERE_RADIUS        = 1.0
@@ -88,26 +95,27 @@ class PipelineWorker(QObject):
         self.running    = True
 
     def run(self):
-        hp   = HighPassFilter(cutoff_hz=HP_CUTOFF_HZ, sampling_rate=SAMPLE_RATE, order=4)
         stft = StftProcessor(nperseg=NPERSEG, noverlap=NOVERLAP)
-        doa  = DoaProcessor(mic_locs=L_INNER, sampling_rate=SAMPLE_RATE,
+        doa  = DoaProcessor(mic_locs=L_INNER, sampling_rate=TARGET_RATE,
                             nfft=NPERSEG, freq_range=DOA_FREQ_RANGE)
 
         chunk_duration = CHUNK_SIZE / SAMPLE_RATE
 
         # Build the pipeline with spy taps at each stage
-        raw_stream      = WavLoader(self.file_path, chunk_size=CHUNK_SIZE).stream()
-        raw_stream      = spy(raw_stream, self.raw_q)
+        raw_stream   = WavLoader(self.file_path, chunk_size=CHUNK_SIZE).stream()
+        raw_stream   = spy(raw_stream, self.raw_q)          # all channels, 44100 Hz
 
-        filtered_stream = hp.process(raw_stream)
-        inner_stream    = extract_channels(filtered_stream, INNER_IDX)
-        inner_stream    = spy(inner_stream, self.filtered_q)
+        proc_stream  = DcOffsetFilter().process(raw_stream)
+        proc_stream  = ResampleProcessor(target_rate=TARGET_RATE).process(proc_stream)
+        inner_stream = extract_channels(proc_stream, INNER_IDX)
+        inner_stream = BandpassFilter(BP_LOW_HZ, BP_HIGH_HZ, sampling_rate=TARGET_RATE).process(inner_stream)
+        inner_stream = spy(inner_stream, self.filtered_q)   # inner channels, 8000 Hz
 
-        stft_stream     = stft.process(inner_stream)
-        stft_stream     = spy(stft_stream, self.stft_q)
+        stft_stream  = stft.process(inner_stream)
+        stft_stream  = spy(stft_stream, self.stft_q)
 
-        doa_stream      = doa.process(stft_stream)
-        doa_stream      = MedianDoaProcessor(window=3).process(doa_stream)
+        doa_stream   = doa.process(stft_stream)
+        doa_stream   = MedianDoaProcessor(window=3).process(doa_stream)
 
         for doa_chunk in doa_stream:
             if not self.running:
@@ -130,14 +138,17 @@ class PipelineWorker(QObject):
 
 class WaveformPlot(pg.PlotWidget):
     """
-    Scrolling multi-channel waveform. Shows the last 2 seconds of audio.
+    Scrolling multi-channel waveform. Shows the last WAVEFORM_SECONDS of audio.
 
     channel_offset adjusts channel label numbers (e.g. 4 → labels start at CH5).
+    sample_rate is used to size the rolling buffer; it must match the stream rate.
     """
 
-    def __init__(self, title, channel_offset=0, parent=None):
+    def __init__(self, title, sample_rate=SAMPLE_RATE, channel_offset=0, parent=None):
         super().__init__(parent, title=title)
+        self._sample_rate    = sample_rate
         self._channel_offset = channel_offset
+        self._buf_size       = sample_rate * WAVEFORM_SECONDS
         self.setBackground('w')
         self.showGrid(x=True, y=True)
         self.setLabel('left', 'Amplitude')
@@ -155,7 +166,7 @@ class WaveformPlot(pg.PlotWidget):
             curve = self.plot(pen=pg.mkPen(color=color, width=1),
                               name=f"CH{label + 1}")
             self._curves.append(curve)
-            self._buffers.append(deque(maxlen=WAVEFORM_BUFFER_SIZE))
+            self._buffers.append(deque(maxlen=self._buf_size))
 
     def update_chunk(self, chunk: AudioChunk):
         n = chunk.data.shape[1]
@@ -163,7 +174,7 @@ class WaveformPlot(pg.PlotWidget):
         for ch in range(n):
             self._buffers[ch].extend(chunk.data[:, ch])
             buf = np.array(self._buffers[ch])
-            x   = np.arange(len(buf)) / SAMPLE_RATE
+            x   = np.arange(len(buf)) / self._sample_rate
             self._curves[ch].setData(x, buf)
 
     def clear_buffers(self):
@@ -178,11 +189,15 @@ class WaveformPlot(pg.PlotWidget):
 class SpectrogramWidget(pg.PlotWidget):
     """
     Scrolling STFT spectrogram in dB. Displays channel 0 of whatever
-    StftChunk it receives (the first inner mic, CH5).
+    StftChunk it receives (the first inner mic, CH5), sliced to
+    SPEC_FREQ_MIN–SPEC_FREQ_MAX Hz.
     """
 
     def __init__(self, parent=None):
-        super().__init__(parent, title="Spectrogram — CH5 (HP-filtered, inner mic)")
+        super().__init__(parent, title=(
+            f"Spectrogram — CH5 (bandpass {BP_LOW_HZ}–{BP_HIGH_HZ} Hz, "
+            f"inner mic, {SPEC_FREQ_MIN:.0f}–{SPEC_FREQ_MAX:.0f} Hz display)"
+        ))
         self.setBackground('k')
         self.setLabel('left', 'Frequency', units='Hz')
         self.setLabel('bottom', 'Time frames')
@@ -195,8 +210,12 @@ class SpectrogramWidget(pg.PlotWidget):
         self._freqs: np.ndarray | None = None
 
     def update_chunk(self, chunk):
+        # Slice to display freq range before rendering
+        mask = (chunk.freqs >= SPEC_FREQ_MIN) & (chunk.freqs <= SPEC_FREQ_MAX)
+        freqs = chunk.freqs[mask]
+
         # magnitudes shape: (n_ch, n_freqs, n_frames) — use first inner mic
-        mag = np.abs(chunk.magnitudes[0])        # (n_freqs, n_frames)
+        mag = np.abs(chunk.magnitudes[0])[mask]  # (n_display_freqs, n_frames)
         db  = 20.0 * np.log10(mag + 1e-9)
 
         self._cols.extend(db[:, t] for t in range(mag.shape[1]))
@@ -204,9 +223,9 @@ class SpectrogramWidget(pg.PlotWidget):
             del self._cols[:-SPEC_MAX_COLS]
 
         if self._freqs is None:
-            self._freqs = chunk.freqs
+            self._freqs = freqs
 
-        img_data = np.stack(self._cols, axis=0)  # (time_cols, n_freqs)
+        img_data = np.stack(self._cols, axis=0)  # (time_cols, n_display_freqs)
         self._img.setImage(img_data, autoLevels=True)
 
         if self._freqs is not None and len(self._freqs) > 1:
@@ -374,9 +393,11 @@ class FileTab(QWidget):
         ctrl_row.addStretch()
         root.addLayout(ctrl_row)
 
-        self._raw_plot      = WaveformPlot("Raw Waveform (all channels)")
+        self._raw_plot      = WaveformPlot("Raw Waveform (all channels)", sample_rate=SAMPLE_RATE)
         self._filtered_plot = WaveformPlot(
-            "HP-Filtered Waveform (inner CH5–8, ≥400 Hz)", channel_offset=4
+            f"Bandpass Waveform (inner CH5–8, {BP_LOW_HZ}–{BP_HIGH_HZ} Hz, {TARGET_RATE} Hz)",
+            sample_rate=TARGET_RATE,
+            channel_offset=4,
         )
         self._spectrogram   = SpectrogramWidget()
         self._sphere        = AzimuthSphereWidget()
