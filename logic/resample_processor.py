@@ -1,36 +1,31 @@
-import math
 from typing import Generator
 
-import numpy as np
-from scipy.signal import resample_poly
+import soxr
 
 from logic.loader import AudioChunk
 
 
 class ResampleProcessor:
-    """Resamples audio to a target sample rate using polyphase filtering.
-
-    Parameters
-    ----------
-    source_rate:
-        Input sample rate in Hz.
-    target_rate:
-        Desired output sample rate in Hz.
-    """
-
     def __init__(self, source_rate: int, target_rate: int):
-        self._passthrough = source_rate == target_rate
-        g = math.gcd(target_rate, source_rate)
-        self._up = target_rate // g
-        self._down = source_rate // g
+        self._source_rate = source_rate
+        self._target_rate = target_rate
+        self._stream: soxr.ResampleStream | None = None
 
     def process(self, chunks: Generator[AudioChunk, None, None]) -> Generator[AudioChunk, None, None]:
         for chunk in chunks:
-            if self._passthrough:
+            if self._source_rate == self._target_rate:
                 yield chunk
                 continue
 
-            # resample_poly expects (samples,) or (samples, channels); axis=0 for (frames, channels)
-            resampled = resample_poly(chunk.data, self._up, self._down, axis=0).astype(np.float32)
+            if self._stream is None:
+                self._stream = soxr.ResampleStream(
+                    in_rate=self._source_rate,
+                    out_rate=self._target_rate,
+                    num_channels=chunk.data.shape[1],
+                    quality="HQ",
+                    dtype="float32",
+                )
+
+            resampled = self._stream.resample_chunk(chunk.data)
 
             yield AudioChunk(data=resampled, timestamp=chunk.timestamp)
