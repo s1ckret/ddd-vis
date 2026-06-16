@@ -15,7 +15,6 @@ class StftChunk:
     freqs: np.ndarray        # shape: (n_freqs,)                    — frequency bin centres in Hz
     times: np.ndarray        # shape: (n_frames,)                   — time offsets within this chunk in seconds
     magnitudes: np.ndarray   # shape: (n_channels, n_freqs, n_frames) — complex STFT spectrum (use np.abs() for magnitude)
-    sampling_rate: int
     timestamp: float         # inherited from AudioChunk
 
 
@@ -40,10 +39,12 @@ class StftProcessor:
 
     def __init__(
         self,
+        sampling_rate: int,
         nperseg: int = 512,
         noverlap: int | None = 256,
         window: str = "hann",
     ):
+        self._sampling_rate = sampling_rate
         self.nperseg = nperseg
         self.noverlap = noverlap
         self.window = window
@@ -70,7 +71,7 @@ class StftProcessor:
             for ch in range(n_channels):
                 freqs, times, Zxx = stft(
                     data[:, ch],
-                    fs=chunk.sampling_rate,
+                    fs=self._sampling_rate,
                     window=self.window,
                     nperseg=self.nperseg,
                     noverlap=self.noverlap,
@@ -86,6 +87,5 @@ class StftProcessor:
                 freqs=freqs,
                 times=times,
                 magnitudes=magnitudes,
-                sampling_rate=chunk.sampling_rate,
                 timestamp=chunk.timestamp,
             )

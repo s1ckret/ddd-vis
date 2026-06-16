@@ -68,7 +68,6 @@ def extract_channels(upstream, ch_slice):
     for chunk in upstream:
         yield AudioChunk(
             data=chunk.data[:, ch_slice],
-            sampling_rate=chunk.sampling_rate,
             timestamp=chunk.timestamp,
         )
 
@@ -95,7 +94,7 @@ class PipelineWorker(QObject):
         self.running    = True
 
     def run(self):
-        stft = StftProcessor(nperseg=NPERSEG, noverlap=NOVERLAP)
+        stft = StftProcessor(sampling_rate=TARGET_RATE, nperseg=NPERSEG, noverlap=NOVERLAP)
         doa  = DoaProcessor(mic_locs=L_INNER, sampling_rate=TARGET_RATE,
                             nfft=NPERSEG, freq_range=DOA_FREQ_RANGE)
 
@@ -106,7 +105,7 @@ class PipelineWorker(QObject):
         raw_stream   = spy(raw_stream, self.raw_q)          # all channels, 44100 Hz
 
         proc_stream  = DcOffsetFilter().process(raw_stream)
-        proc_stream  = ResampleProcessor(target_rate=TARGET_RATE).process(proc_stream)
+        proc_stream  = ResampleProcessor(source_rate=SAMPLE_RATE, target_rate=TARGET_RATE).process(proc_stream)
         inner_stream = extract_channels(proc_stream, INNER_IDX)
         inner_stream = BandpassFilter(BP_LOW_HZ, BP_HIGH_HZ, sampling_rate=TARGET_RATE).process(inner_stream)
         inner_stream = spy(inner_stream, self.filtered_q)   # inner channels, 8000 Hz

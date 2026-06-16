@@ -41,4 +41,4 @@ class BandpassFilter(AudioFilter):
                     self._sos, data[:, ch], zi=self._zi[:, :, ch]
                 )
 
-            yield AudioChunk(data=filtered, sampling_rate=chunk.sampling_rate, timestamp=chunk.timestamp)
+            yield AudioChunk(data=filtered, timestamp=chunk.timestamp)

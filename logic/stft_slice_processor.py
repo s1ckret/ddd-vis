@@ -20,7 +20,8 @@ class StftSliceProcessor:
         Upper bound of the frequency slice in Hz (inclusive).
     """
 
-    def __init__(self, freq_min_hz: float, freq_max_hz: float):
+    def __init__(self, sampling_rate: int, freq_min_hz: float, freq_max_hz: float):
+        self._sampling_rate = sampling_rate
         self._freq_min = freq_min_hz
         self._freq_max = freq_max_hz
 
@@ -31,6 +32,5 @@ class StftSliceProcessor:
                 freqs=chunk.freqs[mask],
                 times=chunk.times,
                 magnitudes=chunk.magnitudes[:, mask, :],
-                sampling_rate=chunk.sampling_rate,
                 timestamp=chunk.timestamp,
             )

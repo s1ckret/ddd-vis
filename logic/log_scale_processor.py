@@ -19,7 +19,8 @@ class LogScaleProcessor:
         Small constant added before log to avoid log(0). Default 1e-5.
     """
 
-    def __init__(self, ref: float = 1.0, eps: float = 1e-5):
+    def __init__(self, sampling_rate: int, ref: float = 1.0, eps: float = 1e-5):
+        self._sampling_rate = sampling_rate
         self._ref = ref
         self._eps = eps
 
@@ -31,6 +32,5 @@ class LogScaleProcessor:
                 freqs=chunk.freqs,
                 times=chunk.times,
                 magnitudes=db,
-                sampling_rate=chunk.sampling_rate,
                 timestamp=chunk.timestamp,
             )

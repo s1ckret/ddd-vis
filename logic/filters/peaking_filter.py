@@ -65,6 +65,5 @@ class PeakingFilter(AudioFilter):
 
             yield AudioChunk(
                 data=filtered,
-                sampling_rate=chunk.sampling_rate,
                 timestamp=chunk.timestamp,
             )

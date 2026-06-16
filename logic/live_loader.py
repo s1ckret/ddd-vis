@@ -37,7 +37,7 @@ class LiveLoader(Loader):
             if status:
                 log.warning("Stream status: %s", status)
             self.audio_queue.put(
-                AudioChunk(data=indata.copy(), sampling_rate=self.sampling_rate, timestamp=time.inputBufferAdcTime)
+                AudioChunk(data=indata.copy(), timestamp=time.inputBufferAdcTime)
             )
 
         stream = sd.InputStream(

@@ -16,4 +16,4 @@ class DcOffsetFilter(AudioFilter):
         for chunk in chunks:
             data = chunk.data.astype(np.float32)
             data -= data.mean(axis=0)
-            yield AudioChunk(data=data, sampling_rate=chunk.sampling_rate, timestamp=chunk.timestamp)
+            yield AudioChunk(data=data, timestamp=chunk.timestamp)

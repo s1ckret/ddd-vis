@@ -14,6 +14,11 @@ class WavLoader(Loader):
     def __init__(self, file_path: str, chunk_size: int = 1024):
         self.file_path = file_path
         self.chunk_size = chunk_size
+        self._sampling_rate: int | None = None
+
+    @property
+    def sampling_rate(self) -> int | None:
+        return self._sampling_rate
 
     def stream(self) -> Generator[AudioChunk, None, None]:
         if not os.path.exists(self.file_path):
@@ -25,6 +30,8 @@ class WavLoader(Loader):
         except Exception as e:
             log.error("Could not load WAV file: %s", e)
             return
+
+        self._sampling_rate = sampling_rate
 
         if data.ndim == 1:
             data = data.reshape(-1, 1)
@@ -44,6 +51,5 @@ class WavLoader(Loader):
         for start in range(0, len(data), self.chunk_size):
             yield AudioChunk(
                 data=data[start : start + self.chunk_size],
-                sampling_rate=sampling_rate,
                 timestamp=start / sampling_rate,
             )
